@@ -1,0 +1,25 @@
+# mahout-vis
+
+Some utilities to visualize Mahout output using Clojure and Incanter.
+
+## Usage
+
+* KMeans
+
+(use 'mahout-vis.core)
+
+;; bootstrap with a Hadoop configuration file
+(bootstrap! "/Users/antonio/Development/tmp/hadoop-0.20.2/conf/core-site.xml")
+
+;; taking as input the output from the example using synthetic control data in Mahout documentation
+;; https://cwiki.apache.org/confluence/display/MAHOUT/Clustering+of+synthetic+control+data
+(def *results* (k-means-output "output/clusters-9/part-r-00000" "output/clusteredPoints/part-m-00000"))
+
+;; visualize component 1 vs 25 and 1 vs 50 from clustered points, also displaying the centroids
+(visualize-plots (compute-comps *results* [1] [25 50] {:display-centroids true}))
+
+## License
+
+Copyright (C) 2011 FIXME
+
+Distributed under the Eclipse Public License, the same as Clojure.
