@@ -191,15 +191,17 @@
                x-label (:x-label opts "")
                y-label (:y-label opts "")
                _ (println (str "LABELS:" x-label " " y-label))
-               the-plot (if (nil? plot)
-                          (scatter-plot this-vals-0
-                                        this-vals-1
-                                        :x-label x-label
-                                        :y-label y-label
-                                        :series-label (first ks)
-                                        :legend true)
-                          (do (add-points plot this-vals-0 this-vals-1 :series-label (first ks))
-                              plot))]
+               the-plot (if (not (= x-label y-label))
+                          (if (nil? plot)
+                            (scatter-plot this-vals-0
+                                          this-vals-1
+                                          :x-label x-label
+                                          :y-label y-label
+                                          :series-label (first ks)
+                                          :legend true)
+                            (do (add-points plot this-vals-0 this-vals-1 :series-label (first ks))
+                                plot))
+                          nil)]
            (recur the-plot (rest ks)))))))
 
 (defn draw-centroid
