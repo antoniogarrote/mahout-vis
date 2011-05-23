@@ -191,7 +191,7 @@
                x-label (:x-label opts "")
                y-label (:y-label opts "")
                _ (println (str "LABELS:" x-label " " y-label))
-               the-plot (if (not (= x-label y-label))
+               the-plot (if (not= x-label y-label)
                           (if (nil? plot)
                             (scatter-plot this-vals-0
                                           this-vals-1
@@ -219,13 +219,14 @@
 (defn compute-comps
   ([clustering-output xs ys] (compute-comps clustering-output xs ys {}))
   ([clustering-output xs ys opts]
-     (for [x xs y ys]
-       (let [x-label (get (:labels opts {}) x (str x))
-             y-label (get (:labels opts {}) y (str y))]
-         (let [plot (compute-scatter-plot (fold-points clustering-output x y) {:x-label x-label :y-label y-label})]
-           (when (:display-centroids opts)
-             (draw-centroids clustering-output plot x y))
-           plot)))))
+     (filter (comp not nil?)
+             (for [x xs y ys]
+               (let [x-label (get (:labels opts {}) x (str x))
+                     y-label (get (:labels opts {}) y (str y))]
+                 (let [plot (compute-scatter-plot (fold-points clustering-output x y) {:x-label x-label :y-label y-label})]
+                   (when (and (not (nil? plot)) (:display-centroids opts))
+                     (draw-centroids clustering-output plot x y))
+                   plot))))))
 
 ;; vector creation
 (defn mahout-vector
