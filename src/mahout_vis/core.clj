@@ -2,10 +2,12 @@
   (:use [incanter core charts])
   (:import [org.apache.hadoop.conf Configuration] 
            [org.apache.hadoop.fs FileSystem Path]
-           [org.apache.hadoop.io Text Writable] 
+           [org.apache.hadoop.io Text Writable LongWritable] 
            [org.apache.mahout.clustering Cluster]
+           [org.apache.mahout.math DenseVector RandomAccessSparseVector]
            [java.awt.geom Ellipse2D$Double]
-           [org.jfree.chart.annotations XYShapeAnnotation XYTextAnnotation]))
+           [org.jfree.chart.annotations XYShapeAnnotation XYTextAnnotation]
+           [org.apache.mahout.clustering.canopy CanopyDriver]))
 
 
 ;; Configuration
@@ -42,16 +44,24 @@
                (alter-var-root #'*conf* (constantly conf)))))
 
 (defn bootstrap!
-  ([] (do (set-config!)
+  ([] (do (println "default bootstrap")
+          (set-config!)
           (set-file-system!)
           :ok))
   ([& config-files]
-     (do (apply set-config! config-files)
-         (set-file-system!)
-         :ok)))
+     (if (or (empty? config-files) (nil? (first config-files)))
+       (bootstrap!)
+       (do (apply set-config! config-files)
+           (set-file-system!)
+           :ok))))
 
 (defn ls
   ([path-str] (vec (.listStatus *fs* (path path-str)))))
+
+(defn delete
+  ([f] (if (string? f)
+         (.delete *fs* (path f))
+         (.delete *fs* (.getPath f)))))
 
 (defn paths
   ([files] (map (fn [f] (.getPath f)) files)))
@@ -60,7 +70,41 @@
 
 (defn seq-file-reader
   ([path-str]
+     (println (str "FS:" *fs*))
+     (println (str "PATH:" path))
+     (println (str "CONF:" *conf*))
      (org.apache.hadoop.io.SequenceFile$Reader. *fs* (path path-str) *conf*)))
+
+(defn seq-file-writer
+  ([path-str key-class val-class]
+     (let [iow  (org.apache.hadoop.io.SequenceFile$Writer. *fs* *conf* (path path-str) key-class val-class)]
+       iow)))
+
+(defn seq-file-long-vector
+  ([path-str]
+     (seq-file-writer path-str org.apache.hadoop.io.LongWritable org.apache.mahout.math.VectorWritable)))
+
+(defn seq-file-write!
+  ([writer wrapper data-pairs]
+     (loop [data data-pairs]
+       (if (empty? data)
+         (do (.close writer)
+             :ok)
+         (let [[^org.apache.hadoop.io.Writable kw
+                ^org.apache.hadoop.io.Writable vw]
+               (apply wrapper (first data))]
+           (do
+             (.append writer kw vw)
+             (recur (rest data))))))))
+
+(defmacro wrapper
+  ([class-key class-value]
+     `(fn [k# v#]
+        (let [kw# (new ~class-key)
+              vw# (new ~class-value)]
+          (.set kw# k#)
+          (.set vw# v#)
+          [kw# vw#]))))
 
 (defn pairs
   ([seq-file-reader]
@@ -99,7 +143,7 @@
             :center (cluster-center c)
             :radius (cluster-radius c)}))
 
-(defn k-means-output
+(defn clustering-algorithm-output
   ([clusters-data clustered-points-data]
      (let [clusters (seq-file-reader clusters-data)
            clustered-points (seq-file-reader clustered-points-data)]
@@ -117,7 +161,8 @@
 
 (defn visualize-plot [plot]
   "Prepare a plot to be displayed"
-  (do (clear-background plot)
+  (do (println (str "Visualizing plot: " plot))
+      (clear-background plot)
       (view plot)
       plot))
 
@@ -145,6 +190,7 @@
                this-vals-1 (map second this-vals)
                x-label (:x-label opts "")
                y-label (:y-label opts "")
+               _ (println (str "LABELS:" x-label " " y-label))
                the-plot (if (nil? plot)
                           (scatter-plot this-vals-0
                                         this-vals-1
@@ -157,9 +203,9 @@
            (recur the-plot (rest ks)))))))
 
 (defn draw-centroid
-  ([plot centroid x y]
-     (let [[x y] [ (nth (:center centroid) x) (nth (:center centroid) y)]
-           [w h] [ (nth (:radius centroid) x) (nth (:radius centroid) y)]]
+  ([plot centroid xpos ypos]
+     (let [[x y] [ (nth (:center centroid) xpos) (nth (:center centroid) ypos)]
+           [w h] [ (nth (:radius centroid) xpos) (nth (:radius centroid) ypos)]]
        (.addAnnotation (.getPlot plot) (XYShapeAnnotation. (Ellipse2D$Double. (- x w) (- y h)  (* 2 w) (* 2 h))))
        (.addAnnotation (.getPlot plot) (XYTextAnnotation. (str (:id centroid)) x y)))))
 
@@ -178,3 +224,37 @@
            (when (:display-centroids opts)
              (draw-centroids clustering-output plot x y))
            plot)))))
+
+;; vector creation
+(defn mahout-vector
+  ([kind data]
+     (let [vector-array (double-array data)
+           vector (condp = kind
+                      :dense  (DenseVector. (count vector-array))
+                      :sparse (RandomAccessSparseVector.(count vector-array))
+                      :sparse-random (RandomAccessSparseVector. (count vector-array))
+                      (throw (Exception. "unknown vector")))]
+       (.assign vector vector-array)
+       vector)))
+
+(defn run-canopy
+  ([input output t1 t2 clustering]
+     (CanopyDriver/run *conf* (path input) (path output) (org.apache.mahout.common.distance.EuclideanDistanceMeasure.)  t1 t2 clustering false)))
+     ;;(CanopyDriver/buildClusters *conf*  (path input) (path output) (org.apache.mahout.common.distance.EuclideanDistanceMeasure.)  t1 t2 false)))
+
+;; random example with canopy
+
+(defn canopy-example
+  ([num-vecs num-comps t1 t2 input output]
+     (let [data (reduce (fn [ac i]
+                          (assoc ac (long i) (mahout-vector :dense (take num-comps (repeatedly #(long (rand 100)))))))
+                        {}
+                        (range 0 num-vecs))]
+       (println "*** generating input data")
+       (seq-file-write! (seq-file-long-vector input) (wrapper org.apache.hadoop.io.LongWritable org.apache.mahout.math.VectorWritable) data)
+       (println "*** runnin canopy")
+       (run-canopy input output t1 t2 true)
+       (println "*** visualizing data")
+       (let [results (clustering-algorithm-output (str output "/clusters-0/part-r-00000" ) (str output "/clusteredPoints/part-m-00000"))]
+         results
+         (visualize-plots (compute-comps results (range 0 num-comps) (range 0 num-comps) {:display-centroids true}))))))
