@@ -191,17 +191,15 @@
                x-label (:x-label opts "")
                y-label (:y-label opts "")
                _ (println (str "LABELS:" x-label " " y-label))
-               the-plot (if (not= x-label y-label)
-                          (if (nil? plot)
-                            (scatter-plot this-vals-0
-                                          this-vals-1
-                                          :x-label x-label
-                                          :y-label y-label
-                                          :series-label (first ks)
-                                          :legend true)
-                            (do (add-points plot this-vals-0 this-vals-1 :series-label (first ks))
-                                plot))
-                          nil)]
+               the-plot (if (nil? plot)
+                          (scatter-plot this-vals-0
+                                        this-vals-1
+                                        :x-label x-label
+                                        :y-label y-label
+                                        :series-label (first ks)
+                                        :legend true)
+                          (do (add-points plot this-vals-0 this-vals-1 :series-label (first ks))
+                              plot))]
            (recur the-plot (rest ks)))))))
 
 (defn draw-centroid
@@ -216,34 +214,44 @@
      (doseq [centroid (:clusters clustering-output)]
        (draw-centroid plot centroid x y))))
 
+(defn build-dimensions
+  ([xs ys]
+     (->> (for [x xs y ys] [x y])
+          (map sort)
+          (map vec) set vec sort
+          (filter (fn [[x y]] (not= x y))))))
+
+(defn build-plot
+  ([x y opts clustering-output]
+     (let [x-label (get (:labels opts {}) x (str x))
+           y-label (get (:labels opts {}) y (str y))]
+       (let [plot (compute-scatter-plot (fold-points clustering-output x y) {:x-label x-label :y-label y-label})]
+         (when (and (not (nil? plot)) (:display-centroids opts))
+           (draw-centroids clustering-output plot x y))
+         plot))))
+
 (defn compute-comps
   ([clustering-output xs ys] (compute-comps clustering-output xs ys {}))
   ([clustering-output xs ys opts]
-     (filter (comp not nil?)
-             (for [x xs y ys]
-               (let [x-label (get (:labels opts {}) x (str x))
-                     y-label (get (:labels opts {}) y (str y))]
-                 (let [plot (compute-scatter-plot (fold-points clustering-output x y) {:x-label x-label :y-label y-label})]
-                   (when (and (not (nil? plot)) (:display-centroids opts))
-                     (draw-centroids clustering-output plot x y))
-                   plot))))))
+     (map  (fn [[x y]] (build-plot x y opts clustering-output))
+           (build-dimensions xs ys))))
 
 ;; vector creation
 (defn mahout-vector
   ([kind data]
      (let [vector-array (double-array data)
            vector (condp = kind
-                      :dense  (DenseVector. (count vector-array))
-                      :sparse (RandomAccessSparseVector.(count vector-array))
-                      :sparse-random (RandomAccessSparseVector. (count vector-array))
-                      (throw (Exception. "unknown vector")))]
+                    :dense  (DenseVector. (count vector-array))
+                    :sparse (RandomAccessSparseVector.(count vector-array))
+                    :sparse-random (RandomAccessSparseVector. (count vector-array))
+                    (throw (Exception. "unknown vector")))]
        (.assign vector vector-array)
        vector)))
 
 (defn run-canopy
   ([input output t1 t2 clustering]
      (CanopyDriver/run *conf* (path input) (path output) (org.apache.mahout.common.distance.EuclideanDistanceMeasure.)  t1 t2 clustering false)))
-     ;;(CanopyDriver/buildClusters *conf*  (path input) (path output) (org.apache.mahout.common.distance.EuclideanDistanceMeasure.)  t1 t2 false)))
+;;(CanopyDriver/buildClusters *conf*  (path input) (path output) (org.apache.mahout.common.distance.EuclideanDistanceMeasure.)  t1 t2 false)))
 
 ;; random example with canopy
 
@@ -261,3 +269,6 @@
        (let [results (clustering-algorithm-output (str output "/clusters-0/part-r-00000" ) (str output "/clusteredPoints/part-m-00000"))]
          results
          (visualize-plots (compute-comps results (range 0 num-comps) (range 0 num-comps) {:display-centroids true}))))))
+
+(def *test* (for [x (range 0 10) y (range 0 10)]
+              [x y]))
